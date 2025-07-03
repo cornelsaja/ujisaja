@@ -1,0 +1,618 @@
+```html
+<div class="overlay">
+    <div class="info-panel" id="infoPanel">
+        <h2>Welcome to Solar System Explorer</h2>
+        <p>Select a celestial body to learn more about it. Use the controls at the bottom to navigate through space.</p>
+        <p>This interactive model demonstrates orbital mechanics and the relative distances between Earth, Moon, and Mars.</p>
+        <div id="celestialInfo"></div>
+        
+        <div class="speed-control">
+            <span>Orbit Speed:</span>
+            <input type="range" min="0" max="5" step="0.1" value="1" class="speed-slider" id="speedControl">
+            <span id="speedValue">1x</span>
+        </div>
+    </div>
+    
+    <div class="controls-panel">
+        <button class="control-btn active" id="freeExploreBtn">Free Explore</button>
+        <button class="control-btn" id="focusEarthBtn">Focus Earth</button>
+        <button class="control-btn" id="focusMoonBtn">Focus Moon</button>
+        <button class="control-btn" id="focusMarsBtn">Focus Mars</button>
+        <button class="control-btn" id="showOrbitsBtn">Toggle Orbits</button>
+        <button class="control-btn" id="measureDistanceBtn">Measure Distance</button>
+        <button class="control-btn" id="helpBtn">Help</button>
+    </div>
+</div>
+
+<div class="tutorial-panel" id="tutorialPanel">
+    <h2>Welcome to Solar System Explorer!</h2>
+    <p>This interactive 3D simulation lets you explore our solar system with realistic physics and educational information.</p>
+    <p><strong>Controls:</strong></p>
+    <p>• Click and drag to rotate the view</p>
+    <p>• Scroll to zoom in/out</p>
+    <p>• Use the buttons at the bottom to focus on different celestial bodies</p>
+    <p>• Click on planets or moons to view detailed information</p>
+    <button id="startExploringBtn">Start Exploring</button>
+</div>
+
+<script>
+    // Main Three.js variables
+    let scene, camera, renderer, controls;
+    let earth, moon, mars, sun;
+    let earthOrbit, moonOrbit, marsOrbit;
+    let showOrbits = true;
+    let animationSpeed = 1;
+    let celestialBodies = {};
+    let labels = {};
+    let clock = new THREE.Clock();
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    let measurementMode = false;
+    let measurementPoints = [];
+    let measurementLine = null;
+    let measurementLabel = null;
+    
+    // Constants for realistic scale
+    const SCALE_FACTOR = 1000; // Scale down by 1000 for visualization
+    const EARTH_RADIUS = 6371 / SCALE_FACTOR; // km
+    const MOON_RADIUS = 1737 / SCALE_FACTOR; // km
+    const MARS_RADIUS = 3389.5 / SCALE_FACTOR; // km
+    const SUN_RADIUS = 696340 / SCALE_FACTOR; // km
+    
+    const EARTH_ORBIT_RADIUS = 149.6e6 / SCALE_FACTOR; // km
+    const MOON_ORBIT_RADIUS = 384400 / SCALE_FACTOR; // km
+    const MARS_ORBIT_RADIUS = 227.9e6 / SCALE_FACTOR; // km
+    
+    // Orbital periods in days (will be converted to animation frames)
+    const EARTH_PERIOD = 365.25;
+    const MOON_PERIOD = 27.3;
+    const MARS_PERIOD = 687;
+    
+    // Initialize the scene
+    function init() {
+        // Create scene
+        scene = new THREE.Scene();
+        
+        // Create camera
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100000);
+        camera.position.set(0, 50, 150);
+        
+        // Create renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+        
+        // Add ambient light
+        const ambientLight = new THREE.AmbientLight(0x333333);
+        scene.add(ambientLight);
+        
+        // Add point light (sun)
+        const pointLight = new THREE.PointLight(0xffffff, 2, 1000);
+        scene.add(pointLight);
+        
+        // Add stars background
+        createStars();
+        
+        // Create celestial bodies
+        createCelestialBodies();
+        
+        // Create orbit lines
+        createOrbitLines();
+        
+        // Add controls
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        
+        // Event listeners
+        window.addEventListener('resize', onWindowResize);
+        window.addEventListener('click', onMouseClick);
+        
+        // UI controls
+        document.getElementById('freeExploreBtn').addEventListener('click', () => setActiveButton('freeExploreBtn'));
+        document.getElementById('focusEarthBtn').addEventListener('click', () => focusOnPlanet('earth'));
+        document.getElementById('focusMoonBtn').addEventListener('click', () => focusOnPlanet('moon'));
+        document.getElementById('focusMarsBtn').addEventListener('click', () => focusOnPlanet('mars'));
+        document.getElementById('showOrbitsBtn').addEventListener('click', toggleOrbits);
+        document.getElementById('measureDistanceBtn').addEventListener('click', toggleMeasurementMode);
+        document.getElementById('helpBtn').addEventListener('click', showTutorial);
+        document.getElementById('startExploringBtn').addEventListener('click', hideTutorial);
+        document.getElementById('speedControl').addEventListener('input', updateSpeed);
+        
+        // Hide loading screen
+        setTimeout(() => {
+            document.querySelector('.loading-screen').style.display = 'none';
+        }, 1500);
+        
+        // Start animation loop
+        animate();
+    }
+    
+    function createStars() {
+        const starsGeometry = new THREE.BufferGeometry();
+        const starsMaterial = new THREE.PointsMaterial({
+            color: 0xffffff,
+            size: 1,
+            sizeAttenuation: false
+        });
+        
+        const starsVertices = [];
+        for (let i = 0; i < 10000; i++) {
+            const x = THREE.MathUtils.randFloatSpread(2000);
+            const y = THREE.MathUtils.randFloatSpread(2000);
+            const z = THREE.MathUtils.randFloatSpread(2000);
+            starsVertices.push(x, y, z);
+        }
+        
+        starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starsVertices, 3));
+        const stars = new THREE.Points(starsGeometry, starsMaterial);
+        scene.add(stars);
+    }
+    
+    function createCelestialBodies() {
+        // Sun (simplified, just for light source)
+        const sunGeometry = new THREE.SphereGeometry(SUN_RADIUS * 0.1, 32, 32);
+        const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        sun = new THREE.Mesh(sunGeometry, sunMaterial);
+        scene.add(sun);
+        
+        // Earth
+        const earthGeometry = new THREE.SphereGeometry(EARTH_RADIUS, 32, 32);
+        const earthTexture = new THREE.TextureLoader().load('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48ZGVmcz48cmFkaWFsR3JhZGllbnQgaWQ9ImEiIGN4PSIxMjgiIGN5PSIxMjgiIHI9IjEyOCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzI5YWJlMiIvPjxzdG9wIG9mZnNldD0iLjIiIHN0b3AtY29sb3I9IiMyOWFiZTIiLz48c3RvcCBvZmZzZXQ9Ii44IiBzdG9wLWNvbG9yPSIjMDA2ODM4Ii8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDA2ODM4Ii8+PC9yYWRpYWxHcmFkaWVudD48L2RlZnM+PGNpcmNsZSBjeD0iMTI4IiBjeT0iMTI4IiByPSIxMjgiIGZpbGw9InVybCgjYSkiLz48cGF0aCBmaWxsPSIjOGNjNjNmIiBkPSJNNzYgNjBjLTUgMTUtMTAgMzAtNSA0NXM1IDMwIDAgNDUtNSAzMC0xMCA0NWMtNSAxNSA1IDMwIDIwIDMwczMwLTUgNDUtMTAgMzAtNSA0NSAwIDMwIDUgNDUgMTAgMzAgNSAzMC0xMC01LTMwLTEwLTQ1IDAtMzAgMC00NSA1LTMwLTEwLTQ1LTMwLTEwLTQ1LTUtNDUtMC0zMC01LTQ1LTEwLTMwLTEweiIvPjxwYXRoIGZpbGw9IiM4Y2M2M2YiIGQ9Ik0xNTYgMTgxYy01LTE1LTUtMzAgMC00NXM1LTMwIDAtNDUtNS0zMC0xMC00NWMtNS0xNS0yMC0xNS0zMC0xMHMtMjAgMTUtMzAgMjAtMjAgMTAtMzAgMTAtMjAgNS0zMCAxMC0xNSAxNS0xMCAzMCAxNSAyMCAyMCAzMCAxMCAyMCAxMCAzMCA1IDIwIDEwIDMwIDE1IDE1IDMwIDEwIDIwLTE1IDMwLTIwIDIwLTEwIDMwLTEwIDIwLTUgMzAtMTAgMTUtMTUgMTAtMzB6Ii8+PC9zdmc+');
+        const earthMaterial = new THREE.MeshPhongMaterial({ 
+            map: earthTexture,
+            specular: 0x333333,
+            shininess: 5
+        });
+        earth = new THREE.Mesh(earthGeometry, earthMaterial);
+        
+        // Earth's pivot for orbit
+        const earthPivot = new THREE.Object3D();
+        scene.add(earthPivot);
+        earthPivot.add(earth);
+        earth.position.x = EARTH_ORBIT_RADIUS;
+        
+        // Moon
+        const moonGeometry = new THREE.SphereGeometry(MOON_RADIUS, 32, 32);
+        const moonTexture = new THREE.TextureLoader().load('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48ZGVmcz48cmFkaWFsR3JhZGllbnQgaWQ9ImEiIGN4PSIxMjgiIGN5PSIxMjgiIHI9IjEyOCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2UwZTBlMCIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzlmOWY5ZiIvPjwvcmFkaWFsR3JhZGllbnQ+PC9kZWZzPjxjaXJjbGUgY3g9IjEyOCIgY3k9IjEyOCIgcj0iMTI4IiBmaWxsPSJ1cmwoI2EpIi8+PGNpcmNsZSBjeD0iODAiIGN5PSI4MCIgcj0iMzAiIGZpbGw9IiM2ZjZmNmYiIG9wYWNpdHk9Ii41Ii8+PGNpcmNsZSBjeD0iMTUwIiBjeT0iMTAwIiByPSIyMCIgZmlsbD0iIzZmNmY2ZiIgb3BhY2l0eT0iLjUiLz48Y2lyY2xlIGN4PSIxMDAiIGN5PSIxNTAiIHI9IjI1IiBmaWxsPSIjNmY2ZjZmIiBvcGFjaXR5PSIuNSIvPjxjaXJjbGUgY3g9IjE4MCIgY3k9IjE3MCIgcj0iMTUiIGZpbGw9IiM2ZjZmNmYiIG9wYWNpdHk9Ii41Ii8+PGNpcmNsZSBjeD0iNTAiIGN5PSIxNzAiIHI9IjE1IiBmaWxsPSIjNmY2ZjZmIiBvcGFjaXR5PSIuNSIvPjwvc3ZnPg==');
+        const moonMaterial = new THREE.MeshPhongMaterial({ 
+            map: moonTexture,
+            specular: 0x222222,
+            shininess: 3
+        });
+        moon = new THREE.Mesh(moonGeometry, moonMaterial);
+        
+        // Moon's pivot for orbit around Earth
+        const moonPivot = new THREE.Object3D();
+        earth.add(moonPivot);
+        moonPivot.add(moon);
+        moon.position.x = MOON_ORBIT_RADIUS / 10; // Scaled for visibility
+        
+        // Mars
+        const marsGeometry = new THREE.SphereGeometry(MARS_RADIUS, 32, 32);
+        const marsTexture = new THREE.TextureLoader().load('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij48ZGVmcz48cmFkaWFsR3JhZGllbnQgaWQ9ImEiIGN4PSIxMjgiIGN5PSIxMjgiIHI9IjEyOCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2ZmOTk2NiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2M4NTAyOSIvPjwvcmFkaWFsR3JhZGllbnQ+PC9kZWZzPjxjaXJjbGUgY3g9IjEyOCIgY3k9IjEyOCIgcj0iMTI4IiBmaWxsPSJ1cmwoI2EpIi8+PGNpcmNsZSBjeD0iNjAiIGN5PSI4MCIgcj0iMzAiIGZpbGw9IiNiMjQ2MjUiIG9wYWNpdHk9Ii41Ii8+PGNpcmNsZSBjeD0iMTcwIiBjeT0iNzAiIHI9IjQwIiBmaWxsPSIjYjI0NjI1IiBvcGFjaXR5PSIuNSIvPjxjaXJjbGUgY3g9IjE1MCIgY3k9IjE3MCIgcj0iMzUiIGZpbGw9IiNiMjQ2MjUiIG9wYWNpdHk9Ii41Ii8+PGNpcmNsZSBjeD0iNzAiIGN5PSIxNTAiIHI9IjI1IiBmaWxsPSIjYjI0NjI1IiBvcGFjaXR5PSIuNSIvPjwvc3ZnPg==');
+        const marsMaterial = new THREE.MeshPhongMaterial({ 
+            map: marsTexture,
+            specular: 0x222222,
+            shininess: 3
+        });
+        mars = new THREE.Mesh(marsGeometry, marsMaterial);
+        
+        // Mars' pivot for orbit
+        const marsPivot = new THREE.Object3D();
+        scene.add(marsPivot);
+        marsPivot.add(mars);
+        mars.position.x = MARS_ORBIT_RADIUS;
+        
+        // Store references for animation
+        celestialBodies = {
+            earth: { mesh: earth, pivot: earthPivot, period: EARTH_PERIOD, radius: EARTH_RADIUS, orbitRadius: EARTH_ORBIT_RADIUS },
+            moon: { mesh: moon, pivot: moonPivot, period: MOON_PERIOD, radius: MOON_RADIUS, orbitRadius: MOON_ORBIT_RADIUS / 10 },
+            mars: { mesh: mars, pivot: marsPivot, period: MARS_PERIOD, radius: MARS_RADIUS, orbitRadius: MARS_ORBIT_RADIUS }
+        };
+        
+        // Create HTML labels for planets
+        createLabels();
+    }
+    
+    function createOrbitLines() {
+        // Earth orbit
+        const earthOrbitGeometry = new THREE.RingGeometry(EARTH_ORBIT_RADIUS - 0.1, EARTH_ORBIT_RADIUS + 0.1, 64);
+        const earthOrbitMaterial = new THREE.MeshBasicMaterial({ color: 0x4191ff, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+        earthOrbit = new THREE.Mesh(earthOrbitGeometry, earthOrbitMaterial);
+        earthOrbit.rotation.x = Math.PI / 2;
+        scene.add(earthOrbit);
+        
+        // Moon orbit
+        const moonOrbitGeometry = new THREE.RingGeometry(MOON_ORBIT_RADIUS / 10 - 0.05, MOON_ORBIT_RADIUS / 10 + 0.05, 64);
+        const moonOrbitMaterial = new THREE.MeshBasicMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+        moonOrbit = new THREE.Mesh(moonOrbitGeometry, moonOrbitMaterial);
+        moonOrbit.rotation.x = Math.PI / 2;
+        earth.add(moonOrbit);
+        
+        // Mars orbit
+        const marsOrbitGeometry = new THREE.RingGeometry(MARS_ORBIT_RADIUS - 0.1, MARS_ORBIT_RADIUS + 0.1, 64);
+        const marsOrbitMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b6b, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+        marsOrbit = new THREE.Mesh(marsOrbitGeometry, marsOrbitMaterial);
+        marsOrbit.rotation.x = Math.PI / 2;
+        scene.add(marsOrbit);
+    }
+    
+    function createLabels() {
+        // Create HTML labels for each celestial body
+        const bodies = ['earth', 'moon', 'mars'];
+        const names = ['Earth', 'Moon', 'Mars'];
+        
+        bodies.forEach((body, index) => {
+            const label = document.createElement('div');
+            label.className = 'planet-label';
+            label.textContent = names[index];
+            label.style.display = 'none';
+            label.addEventListener('click', () => {
+                showCelestialInfo(body);
+                focusOnPlanet(body);
+            });
+            document.body.appendChild(label);
+            labels[body] = label;
+        });
+    }
+    
+    function updateLabels() {
+        // Update position of HTML labels to match 3D objects
+        for (const [body, label] of Object.entries(labels)) {
+            const position = celestialBodies[body].mesh.getWorldPosition(new THREE.Vector3());
+            const screenPosition = worldToScreen(position);
+            
+            if (screenPosition.z > 0) { // Only show if in front of camera
+                label.style.display = 'block';
+                label.style.left = `${screenPosition.x}px`;
+                label.style.top = `${screenPosition.y}px`;
+            } else {
+                label.style.display = 'none';
+            }
+        }
+    }
+    
+    function worldToScreen(worldPosition) {
+        // Convert 3D world position to 2D screen position
+        const vector = worldPosition.clone();
+        vector.project(camera);
+        
+        return {
+            x: (vector.x * 0.5 + 0.5) * window.innerWidth,
+            y: (-(vector.y * 0.5) + 0.5) * window.innerHeight,
+            z: vector.z
+        };
+    }
+    
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        const delta = clock.getDelta() * animationSpeed;
+        
+        // Rotate planets around their axes
+        celestialBodies.earth.mesh.rotation.y += 0.01 * delta;
+        celestialBodies.moon.mesh.rotation.y += 0.005 * delta;
+        celestialBodies.mars.mesh.rotation.y += 0.008 * delta;
+        
+        // Orbit planets around the sun
+        celestialBodies.earth.pivot.rotation.y += (2 * Math.PI / (celestialBodies.earth.period * 24)) * delta;
+        celestialBodies.moon.pivot.rotation.y += (2 * Math.PI / (celestialBodies.moon.period * 24)) * delta;
+        celestialBodies.mars.pivot.rotation.y += (2 * Math.PI / (celestialBodies.mars.period * 24)) * delta;
+        
+        // Update controls
+        controls.update();
+        
+        // Update HTML labels
+        updateLabels();
+        
+        // Update measurement line if in measurement mode
+        if (measurementLine && measurementPoints.length === 2) {
+            updateMeasurementLine();
+        }
+        
+        renderer.render(scene, camera);
+    }
+    
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    
+    function onMouseClick(event) {
+        // Calculate mouse position in normalized device coordinates
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        
+        // Update the picking ray with the camera and mouse position
+        raycaster.setFromCamera(mouse, camera);
+        
+        // Calculate objects intersecting the picking ray
+        const intersects = raycaster.intersectObjects([
+            celestialBodies.earth.mesh,
+            celestialBodies.moon.mesh,
+            celestialBodies.mars.mesh
+        ]);
+        
+        if (intersects.length > 0) {
+            const object = intersects[0].object;
+            
+            if (measurementMode) {
+                handleMeasurementClick(object);
+            } else {
+                // Determine which body was clicked
+                if (object === celestialBodies.earth.mesh) {
+                    showCelestialInfo('earth');
+                    focusOnPlanet('earth');
+                } else if (object === celestialBodies.moon.mesh) {
+                    showCelestialInfo('moon');
+                    focusOnPlanet('moon');
+                } else if (object === celestialBodies.mars.mesh) {
+                    showCelestialInfo('mars');
+                    focusOnPlanet('mars');
+                }
+            }
+        } else if (measurementMode && measurementPoints.length === 1) {
+            // Clear measurement if clicked in empty space
+            clearMeasurement();
+        }
+    }
+    
+    function showCelestialInfo(body) {
+        const infoDiv = document.getElementById('celestialInfo');
+        let info = '';
+        
+        switch(body) {
+            case 'earth':
+                info = `
+                    <h2>Earth</h2>
+                    <p><strong>Radius:</strong> 6,371 km</p>
+                    <p><strong>Orbital Period:</strong> 365.25 days</p>
+                    <p><strong>Distance from Sun:</strong> 149.6 million km</p>
+                    <p><strong>Orbital Velocity:</strong> 29.78 km/s</p>
+                    <p>Earth is our home planet, the only known place in the universe where life has been found. Its distance from the Sun and its orbital characteristics create the conditions necessary for life as we know it.</p>
+                `;
+                break;
+            case 'moon':
+                info = `
+                    <h2>Moon</h2>
+                    <p><strong>Radius:</strong> 1,737 km</p>
+                    <p><strong>Orbital Period:</strong> 27.3 days</p>
+                    <p><strong>Distance from Earth:</strong> 384,400 km</p>
+                    <p><strong>Orbital Velocity:</strong> 1.022 km/s</p>
+                    <p>The Moon is Earth's only natural satellite. Its gravitational influence produces ocean tides and slightly lengthens our day. The Moon's orbit around Earth is elliptical with an eccentricity of 0.0549.</p>
+                `;
+                break;
+            case 'mars':
+                info = `
+                    <h2>Mars</h2>
+                    <p><strong>Radius:</strong> 3,389.5 km</p>
+                    <p><strong>Orbital Period:</strong> 687 days</p>
+                    <p><strong>Distance from Sun:</strong> 227.9 million km</p>
+                    <p><strong>Orbital Velocity:</strong> 24.077 km/s</p>
+                    <p>Mars is the fourth planet from the Sun. It's often called the "Red Planet" due to its reddish appearance, caused by iron oxide (rust) on its surface. Mars has a thin atmosphere and features valleys, deserts, and polar ice caps.</p>
+                `;
+                break;
+        }
+        
+        infoDiv.innerHTML = info;
+    }
+    
+    function focusOnPlanet(body) {
+        // Set active button
+        setActiveButton(body === 'earth' ? 'focusEarthBtn' : body === 'moon' ? 'focusMoonBtn' : 'focusMarsBtn');
+        
+        // Get the target position
+        const target = celestialBodies[body].mesh.getWorldPosition(new THREE.Vector3());
+        
+        // Calculate offset based on planet size
+        const radius = celestialBodies[body].radius;
+        const offset = radius * 10;
+        
+        // Animate camera to position
+        const startPosition = camera.position.clone();
+        const endPosition = new THREE.Vector3(
+            target.x + offset,
+            target.y + offset,
+            target.z + offset
+        );
+        
+        // Simple animation
+        let startTime = Date.now();
+        const duration = 1000; // 1 second
+        
+        function animateCamera() {
+            const now = Date.now();
+            const timeElapsed = now - startTime;
+            const progress = Math.min(timeElapsed / duration, 1);
+            
+            // Ease in-out function
+            const easeProgress = progress < 0.5
+                ? 2 * progress * progress
+                : -1 + (4 - 2 * progress) * progress;
+            
+            camera.position.lerpVectors(startPosition, endPosition, easeProgress);
+            controls.target.copy(target);
+            controls.update();
+            
+            if (progress < 1) {
+                requestAnimationFrame(animateCamera);
+            }
+        }
+        
+        animateCamera();
+    }
+    
+    function setActiveButton(id) {
+        // Remove active class from all buttons
+        document.querySelectorAll('.control-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        // Add active class to selected button
+        document.getElementById(id).classList.add('active');
+    }
+    
+    function toggleOrbits() {
+        showOrbits = !showOrbits;
+        earthOrbit.visible = showOrbits;
+        moonOrbit.visible = showOrbits;
+        marsOrbit.visible = showOrbits;
+        
+        // Toggle active state on button
+        document.getElementById('showOrbitsBtn').classList.toggle('active');
+    }
+    
+    function toggleMeasurementMode() {
+        measurementMode = !measurementMode;
+        document.getElementById('measureDistanceBtn').classList.toggle('active');
+        
+        if (!measurementMode) {
+            clearMeasurement();
+        } else {
+            // Show instruction
+            const infoDiv = document.getElementById('celestialInfo');
+            infoDiv.innerHTML = '<h2>Distance Measurement</h2><p>Click on two celestial bodies to measure the distance between them.</p>';
+        }
+    }
+    
+    function handleMeasurementClick(object) {
+        if (measurementPoints.length === 0) {
+            // First point
+            measurementPoints.push(object);
+            
+            // Show instruction
+            const infoDiv = document.getElementById('celestialInfo');
+            infoDiv.innerHTML = '<h2>Distance Measurement</h2><p>First point selected. Click on another celestial body to measure the distance.</p>';
+            
+        } else if (measurementPoints.length === 1) {
+            // Second point
+            if (measurementPoints[0] !== object) {
+                measurementPoints.push(object);
+                showDistance();
+            }
+        }
+    }
+    
+    function showDistance() {
+        if (measurementPoints.length !== 2) return;
+        
+        const point1 = measurementPoints[0].getWorldPosition(new THREE.Vector3());
+        const point2 = measurementPoints[1].getWorldPosition(new THREE.Vector3());
+        
+        // Calculate distance
+        const distance = point1.distanceTo(point2) * SCALE_FACTOR;
+        
+        // Display in info panel
+        const infoDiv = document.getElementById('celestialInfo');
+        
+        // Determine which bodies are being measured
+        let body1, body2;
+        for (const [name, data] of Object.entries(celestialBodies)) {
+            if (data.mesh === measurementPoints[0]) body1 = name;
+            if (data.mesh === measurementPoints[1]) body2 = name;
+        }
+        
+        infoDiv.innerHTML = `
+            <h2>Distance Measurement</h2>
+            <p>Distance from ${body1.charAt(0).toUpperCase() + body1.slice(1)} to ${body2.charAt(0).toUpperCase() + body2.slice(1)}:</p>
+            <p><strong>${distance.toLocaleString()} km</strong></p>
+            <p>This is approximately ${(distance / 384400).toFixed(2)} times the Earth-Moon distance.</p>
+            <p>Light would take ${(distance / 299792.458).toFixed(2)} seconds to travel this distance.</p>
+        `;
+        
+        // Create visual line between points
+        createMeasurementLine(point1, point2, distance);
+    }
+    
+    function createMeasurementLine(point1, point2, distance) {
+        // Remove existing line
+        if (measurementLine) {
+            document.body.removeChild(measurementLine);
+        }
+        if (measurementLabel) {
+            document.body.removeChild(measurementLabel);
+        }
+        
+        // Create line element
+        measurementLine = document.createElement('div');
+        measurementLine.className = 'distance-line';
+        document.body.appendChild(measurementLine);
+        
+        // Create label
+        measurementLabel = document.createElement('div');
+        measurementLabel.className = 'distance-label';
+        measurementLabel.textContent = `${distance.toLocaleString()} km`;
+        document.body.appendChild(measurementLabel);
+        
+        // Position will be updated in animation loop
+        updateMeasurementLine();
+    }
+    
+    function updateMeasurementLine() {
+        if (!measurementLine || !measurementLabel || measurementPoints.length !== 2) return;
+        
+        const point1 = measurementPoints[0].getWorldPosition(new THREE.Vector3());
+        const point2 = measurementPoints[1].getWorldPosition(new THREE.Vector3());
+        
+        const screenPoint1 = worldToScreen(point1);
+        const screenPoint2 = worldToScreen(point2);
+        
+        // Only show if both points are in front of camera
+        if (screenPoint1.z > 0 && screenPoint2.z > 0) {
+            measurementLine.style.display = 'block';
+            measurementLabel.style.display = 'block';
+            
+            // Calculate distance and angle
+            const dx = screenPoint2.x - screenPoint1.x;
+            const dy = screenPoint2.y - screenPoint1.y;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx);
+            
+            // Position and rotate line
+            measurementLine.style.left = `${screenPoint1.x}px`;
+            measurementLine.style.top = `${screenPoint1.y}px`;
+            measurementLine.style.width = `${length}px`;
+            measurementLine.style.transform = `rotate(${angle}rad)`;
+            
+            // Position label at midpoint
+            measurementLabel.style.left = `${(screenPoint1.x + screenPoint2.x) / 2 - measurementLabel.offsetWidth / 2}px`;
+            measurementLabel.style.top = `${(screenPoint1.y + screenPoint2.y) / 2 - measurementLabel.offsetHeight / 2}px`;
+        } else {
+            measurementLine.style.display = 'none';
+            measurementLabel.style.display = 'none';
+        }
+    }
+    
+    function clearMeasurement() {
+        measurementPoints = [];
+        
+        if (measurementLine) {
+            document.body.removeChild(measurementLine);
+            measurementLine = null;
+        }
+        
+        if (measurementLabel) {
+            document.body.removeChild(measurementLabel);
+            measurementLabel = null;
+        }
+    }
+    
+    function showTutorial() {
+        document.getElementById('tutorialPanel').style.display = 'block';
+    }
+    
+    function hideTutorial() {
+        document.getElementById('tutorialPanel').style.display = 'none';
+    }
+    
+    function updateSpeed(event) {
+        animationSpeed = parseFloat(event.target.value);
+        document.getElementById('speedValue').textContent = `${animationSpeed}x`;
+    }
+    
+    // Initialize the application
+    init();
+</script>
